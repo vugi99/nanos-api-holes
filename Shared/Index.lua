@@ -251,6 +251,15 @@ function ShowMissingClassGetterSetters(name, v, global_missing_freg)
                     table.insert(missing_setters, search)
                     global_missing_freg[search] = true
                 end
+            -- I don't think that's useful
+            --[[
+            elseif string.sub(fname, 1, 2) == "Is" then
+                local search = "Set" .. string.sub(fname, 3)
+                if not freg[search] then
+                    table.insert(missing_setters, search)
+                    global_missing_freg[search] = true
+                    print("Is matching not found", search)
+                end]]--
             elseif string.sub(fname, 1, 3) == "Set" then
                 local search = "Get" .. string.sub(fname, 4)
                 local search_is = "Is" .. string.sub(fname, 4)
