@@ -9,6 +9,10 @@ local ignored_classes = {
     File = true,
 }
 
+local search_translation = {
+    SetVisibility = "IsVisible"
+}
+
 -- immutable fields functions (to be ignored by holes)
 local ignored_functions = {
     -- classname = {IngnoredFunctionName=true, ...}
@@ -56,6 +60,7 @@ local ignored_functions = {
 
         GetVOIPListeningChannels = true, -- SetVOIPGlobalChannelSetting?
         GetVOIPSpeakingChannels = true, -- SetVOIPGlobalChannelSetting?
+        GetVOIPAmplitude = true, -- I think that's deprecated
     },
 
     ["Server"] = {
@@ -118,28 +123,6 @@ local ignored_functions = {
     }
 }
 
-local ignored_functions_server = {
-    ["*"] = {
-        SetMaterial = true, -- GetMaterial cannot be retrieved in most cases
-        SetPhysicalMaterial = true,
-        SetPhysicsAsset = true,
-    },
-
-    ["Particle"] = {
-        SetParameterMaterial = true,
-        SetParameterBool = true,
-        SetParameterFloat = true,
-        SetParameterMaterialFromTexture = true,
-        SetParameterInt = true,
-        SetParameterColor = true,
-        SetParameterVector = true,
-    }
-}
-
-local ignored_functions_client = {
-
-}
-
 local function TableMergeInto(src, dst)
     for k, v in pairs(src) do
         if type(dst[k]) == "table" then
@@ -149,11 +132,7 @@ local function TableMergeInto(src, dst)
         end
     end
 end
-if Server then
-    TableMergeInto(ignored_functions_server, ignored_functions)
-else
-    TableMergeInto(ignored_functions_client, ignored_functions)
-end
+TableMergeInto(Package.Require("IgnoreConfig.lua"), ignored_functions)
 
 local function IsIgnoredFunction(classname, name)
     if type(name) ~= "string" then return true end
@@ -185,7 +164,7 @@ local function table_count(tbl)
 end
 
 local function PrintKeys(name, tbl)
-    local pk_tbl = {string.format("PrintKeys %s {", name or "")}
+    local pk_tbl = {string.format("%s {", name or "")}
     for k, v in pairs(tbl) do
         table.insert(pk_tbl, "\t" .. k)
     end
@@ -219,14 +198,17 @@ function GetNanosClasses()
     return ent_classes, static_classes
 end
 
-function ShowMissingClassGetterSetters(name, v, global_missing_freg)
+function ShowMissingClassGetterSetters(name, v, global_missing_freg, global_freg)
     -- API functions lays in __function, other ones are in root.
-    local freg = {}
+    local full_freg = {} -- All the functions found on that class
+    local freg = {} -- Which functions will be checked
     for fname, f in pairs(ForceDump(v)) do
         if type(f) == "function" then
             if not IsIgnoredFunction(name, fname) then
                 freg[fname] = true
             end
+            global_freg[fname] = true
+            full_freg[fname] = true
         end
     end
 
@@ -235,19 +217,28 @@ function ShowMissingClassGetterSetters(name, v, global_missing_freg)
             if not IsIgnoredFunction(name, fname) then
                 freg[fname] = true
             end
+            global_freg[fname] = true
+            full_freg[fname] = true
         end
     end
 
-    --print(name, NanosTable.Dump(freg))
+    --if name == "CharacterSimple" then
+        --print(name, NanosTable.Dump(full_freg))
+    --end
 
     local missing_getters = {}
     local missing_setters = {}
 
     for fname, _ in pairs(freg) do
         if string.len(fname) >= 3 then
+            local translation = search_translation[fname]
+            local translation_match = false
+            if translation then
+                translation_match = full_freg[translation]
+            end
             if string.sub(fname, 1, 3) == "Get" then
                 local search = "Set" .. string.sub(fname, 4)
-                if not freg[search] then
+                if (not full_freg[search]) and (not translation_match) then
                     table.insert(missing_setters, search)
                     global_missing_freg[search] = true
                 end
@@ -255,7 +246,7 @@ function ShowMissingClassGetterSetters(name, v, global_missing_freg)
             --[[
             elseif string.sub(fname, 1, 2) == "Is" then
                 local search = "Set" .. string.sub(fname, 3)
-                if not freg[search] then
+                if not full_freg[search] then
                     table.insert(missing_setters, search)
                     global_missing_freg[search] = true
                     print("Is matching not found", search)
@@ -263,7 +254,7 @@ function ShowMissingClassGetterSetters(name, v, global_missing_freg)
             elseif string.sub(fname, 1, 3) == "Set" then
                 local search = "Get" .. string.sub(fname, 4)
                 local search_is = "Is" .. string.sub(fname, 4)
-                if (not freg[search]) and (not freg[search_is]) then
+                if (not full_freg[search]) and (not full_freg[search_is]) and (not translation_match) then
                     table.insert(missing_getters, search)
                     global_missing_freg[search] = true
                 end
@@ -282,12 +273,12 @@ function ShowMissingClassGetterSetters(name, v, global_missing_freg)
     return missing_getters, missing_setters
 end
 
-function ShowAllMissingGetterSetters(classes, global_missing_freg)
+function ShowAllMissingGetterSetters(classes, global_missing_freg, global_freg)
     local m_g_count = 0
     local m_s_count = 0
     for k, v in pairs(classes) do
         if not ignored_classes[k] then
-            local m_g, m_s = ShowMissingClassGetterSetters(k, v, global_missing_freg)
+            local m_g, m_s = ShowMissingClassGetterSetters(k, v, global_missing_freg, global_freg)
             m_g_count = m_g_count + table_count(m_g)
             m_s_count = m_s_count + table_count(m_s)
         end
@@ -297,19 +288,20 @@ end
 
 function FindAPIHoles()
     local ent_classes, static_classes = GetNanosClasses()
-    --PrintKeys("ent_classes", ent_classes)
-    --PrintKeys("static_classes", static_classes)
+    PrintKeys("Entity Classes", ent_classes)
+    PrintKeys("Static Classes", static_classes)
 
     local global_mg_count = 0
     local global_ms_count = 0
 
     local global_missing_freg = {}
+    local global_freg = {}
 
     local function ShowMissingGS(name, classes)
         print("===============================================")
         print("\t" .. name)
         print("===============================================")
-        local m_g_count, m_s_count = ShowAllMissingGetterSetters(classes, global_missing_freg)
+        local m_g_count, m_s_count = ShowAllMissingGetterSetters(classes, global_missing_freg, global_freg)
         global_mg_count = global_mg_count + m_g_count
         global_ms_count = global_ms_count + m_s_count
     end
@@ -320,7 +312,14 @@ function FindAPIHoles()
 
     print("Total Missing Getters Count:", global_mg_count)
     print("Total Missing Setters Count:", global_ms_count)
-    print("Total Unique Missing functions:", table_count(global_missing_freg))
+    local tc_gfreg = table_count(global_freg)
+    local tc_mfreg = table_count(global_missing_freg)
+    print("Total Unique functions:", tc_gfreg)
+    print("Total Unique Missing functions:", tc_mfreg)
+
+    print("API Holes percentage:", (tc_mfreg/tc_gfreg)*100 .. "%")
+
+    --PrintKeys("Functions", global_freg)
 end
 
 
