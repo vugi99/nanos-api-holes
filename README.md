@@ -3,7 +3,7 @@
 This script will identify missing Setters and Getters in the nanos lua environment.
 
 > [!NOTE]
-> The script doesn't check against the documentation api, there may be some undocumented or environment mismatches.
+> The script doesn't check against the documentation api, there may be some undocumented or mismatches with an actual environment.
 
 ## Setup
 * Install the package
